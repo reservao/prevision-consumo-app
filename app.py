@@ -1,8 +1,9 @@
 from flask import Flask, request, send_file, render_template_string
 import pandas as pd
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, NamedStyle
 from openpyxl.utils import get_column_letter
+from copy import copy
 import io
 import os
 import tempfile
@@ -10,7 +11,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB máximo
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
 HTML = """
 <!DOCTYPE html>
@@ -27,29 +28,11 @@ HTML = """
     --light: #EBF5FB; --mid: #D6E4F0; --muted: #6b7c93;
     --white: #ffffff; --success: #27ae60; --error: #e74c3c;
   }
-  body {
-    font-family: 'DM Sans', sans-serif; background: #f0f4f8;
-    min-height: 100vh; display: flex; align-items: center;
-    justify-content: center; padding: 2rem;
-  }
-  body::before {
-    content: ''; position: fixed; inset: 0;
-    background: radial-gradient(ellipse at 20% 20%, rgba(31,78,121,0.08) 0%, transparent 60%),
-                radial-gradient(ellipse at 80% 80%, rgba(46,134,222,0.06) 0%, transparent 60%);
-    pointer-events: none; z-index: 0;
-  }
-  .card {
-    background: var(--white); border-radius: 24px;
-    box-shadow: 0 20px 60px rgba(26,46,74,0.12), 0 4px 16px rgba(26,46,74,0.06);
-    padding: 3rem 3.5rem; max-width: 560px; width: 100%; position: relative; z-index: 1;
-  }
+  body { font-family: 'DM Sans', sans-serif; background: #f0f4f8; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; }
+  body::before { content: ''; position: fixed; inset: 0; background: radial-gradient(ellipse at 20% 20%, rgba(31,78,121,0.08) 0%, transparent 60%), radial-gradient(ellipse at 80% 80%, rgba(46,134,222,0.06) 0%, transparent 60%); pointer-events: none; z-index: 0; }
+  .card { background: var(--white); border-radius: 24px; box-shadow: 0 20px 60px rgba(26,46,74,0.12), 0 4px 16px rgba(26,46,74,0.06); padding: 3rem 3.5rem; max-width: 560px; width: 100%; position: relative; z-index: 1; }
   .logo-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 2rem; }
-  .logo-icon {
-    width: 44px; height: 44px;
-    background: linear-gradient(135deg, var(--blue), var(--accent));
-    border-radius: 12px; display: flex; align-items: center;
-    justify-content: center; font-size: 1.4rem; flex-shrink: 0;
-  }
+  .logo-icon { width: 44px; height: 44px; background: linear-gradient(135deg, var(--blue), var(--accent)); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.4rem; flex-shrink: 0; }
   .logo-text { font-family: 'DM Serif Display', serif; font-size: 1.1rem; color: var(--navy); line-height: 1.2; }
   .logo-text span { display: block; font-family: 'DM Sans', sans-serif; font-size: 0.75rem; font-weight: 400; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
   h1 { font-family: 'DM Serif Display', serif; font-size: 2rem; color: var(--navy); line-height: 1.2; margin-bottom: 0.75rem; }
@@ -58,11 +41,7 @@ HTML = """
   .step { flex: 1; background: var(--light); border-radius: 12px; padding: 1rem; text-align: center; }
   .step-num { font-size: 1.4rem; margin-bottom: 0.3rem; }
   .step-label { font-size: 0.75rem; color: var(--blue); font-weight: 600; letter-spacing: 0.02em; }
-  .drop-zone {
-    border: 2px dashed var(--mid); border-radius: 16px; padding: 2.5rem 2rem;
-    text-align: center; cursor: pointer; transition: all 0.25s ease;
-    background: var(--light); margin-bottom: 1.5rem; position: relative;
-  }
+  .drop-zone { border: 2px dashed var(--mid); border-radius: 16px; padding: 2.5rem 2rem; text-align: center; cursor: pointer; transition: all 0.25s ease; background: var(--light); margin-bottom: 1.5rem; position: relative; }
   .drop-zone:hover, .drop-zone.dragover { border-color: var(--accent); background: rgba(46,134,222,0.05); }
   .drop-zone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
   .drop-icon { font-size: 2.5rem; margin-bottom: 0.75rem; }
@@ -70,14 +49,7 @@ HTML = """
   .drop-sub { font-size: 0.8rem; color: var(--muted); }
   .file-selected { background: rgba(39,174,96,0.08); border-color: var(--success); border-style: solid; }
   .file-name { font-size: 0.85rem; color: var(--success); font-weight: 600; margin-top: 0.5rem; word-break: break-all; }
-  .btn {
-    width: 100%; padding: 1rem;
-    background: linear-gradient(135deg, var(--blue), var(--accent));
-    color: white; border: none; border-radius: 12px;
-    font-family: 'DM Sans', sans-serif; font-size: 1rem; font-weight: 600;
-    cursor: pointer; transition: all 0.2s ease;
-    box-shadow: 0 4px 16px rgba(31,78,121,0.25); letter-spacing: 0.02em;
-  }
+  .btn { width: 100%; padding: 1rem; background: linear-gradient(135deg, var(--blue), var(--accent)); color: white; border: none; border-radius: 12px; font-family: 'DM Sans', sans-serif; font-size: 1rem; font-weight: 600; cursor: pointer; transition: all 0.2s ease; box-shadow: 0 4px 16px rgba(31,78,121,0.25); letter-spacing: 0.02em; }
   .btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(31,78,121,0.3); }
   .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
   .alert { padding: 1rem 1.25rem; border-radius: 10px; font-size: 0.88rem; margin-top: 1rem; display: none; }
@@ -125,7 +97,6 @@ HTML = """
   const alertBox  = document.getElementById('alertBox');
   const loading   = document.getElementById('loading');
   const form      = document.getElementById('uploadForm');
-
   fileInput.addEventListener('change', () => {
     if (fileInput.files.length > 0) {
       fileName.textContent = '✅ ' + fileInput.files[0].name;
@@ -139,10 +110,8 @@ HTML = """
     e.preventDefault(); dropZone.classList.remove('dragover');
     const files = e.dataTransfer.files;
     if (files.length > 0) {
-      fileInput.files = files;
-      fileName.textContent = '✅ ' + files[0].name;
-      dropZone.classList.add('file-selected');
-      submitBtn.disabled = false;
+      fileInput.files = files; fileName.textContent = '✅ ' + files[0].name;
+      dropZone.classList.add('file-selected'); submitBtn.disabled = false;
     }
   });
   form.addEventListener('submit', async (e) => {
@@ -180,7 +149,6 @@ HTML = """
 
 
 def leer_xml_spreadsheetml(filepath):
-    """Lee archivos .xls que son en realidad XML SpreadsheetML (exportados por SAP, Oracle, etc.)"""
     NS = 'urn:schemas-microsoft-com:office:spreadsheet'
     tree = ET.parse(filepath)
     root = tree.getroot()
@@ -222,24 +190,31 @@ def leer_xml_spreadsheetml(filepath):
     return pd.DataFrame(rows_data)
 
 
+def aplicar_estilo(cell, font, fill, alignment, border, number_format=None):
+    """Aplica estilo a una celda de forma segura."""
+    cell.font      = copy(font)
+    cell.fill      = copy(fill)
+    cell.alignment = copy(alignment)
+    cell.border    = copy(border)
+    if number_format:
+        cell.number_format = number_format
+
+
 def transformar_archivo(filepath):
     df = None
     use_xml = False
 
-    # Intento 1: openpyxl (xlsx)
     try:
         df = pd.read_excel(filepath, header=None, engine='openpyxl')
     except Exception:
         pass
 
-    # Intento 2: xlrd (xls binario)
     if df is None:
         try:
             df = pd.read_excel(filepath, header=None, engine='xlrd')
         except Exception:
             pass
 
-    # Intento 3: XML SpreadsheetML disfrazado de .xls
     if df is None:
         try:
             df = leer_xml_spreadsheetml(filepath)
@@ -250,8 +225,6 @@ def transformar_archivo(filepath):
     if df is None:
         raise ValueError("No se pudo leer el archivo. Asegúrate de subir un .xls o .xlsx válido.")
 
-    # En XML: código col[0], cantidad col[1], unidad col[2]
-    # En Excel convertido: código col[0], cantidad col[3], unidad col[8]
     col_cant = 1 if use_xml else 3
     col_uni  = 2 if use_xml else 8
 
@@ -287,87 +260,107 @@ def transformar_archivo(filepath):
 
     result = pd.DataFrame(records)
 
-    # --- Generar Excel formateado ---
-    wb = openpyxl.Workbook()
+    # --- Estilos definidos UNA SOLA VEZ ---
+    thin = Side(style='thin', color="BDC3C7")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    font_header  = Font(name="Arial", bold=True,  color="FFFFFF", size=11)
+    font_group   = Font(name="Arial", bold=True,  color="1F4E79", size=10)
+    font_data    = Font(name="Arial", bold=False, color="000000", size=10)
+    font_title   = Font(name="Arial", bold=True,  color="1F4E79", size=14)
+    font_sub     = Font(name="Arial", italic=True, color="666666", size=9)
+
+    fill_header  = PatternFill("solid", start_color="1F4E79", end_color="1F4E79")
+    fill_group   = PatternFill("solid", start_color="D6E4F0", end_color="D6E4F0")
+    fill_alt     = PatternFill("solid", start_color="EBF5FB", end_color="EBF5FB")
+    fill_white   = PatternFill("solid", start_color="FFFFFF", end_color="FFFFFF")
+    fill_title   = PatternFill("solid", start_color="EBF5FB", end_color="EBF5FB")
+
+    align_center  = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    align_left    = Alignment(horizontal='left',   vertical='center')
+    align_right   = Alignment(horizontal='right',  vertical='center')
+
+    # --- Construir workbook ---
+    wb = openpyxl.Workbook(write_only=False)
     ws = wb.active
     ws.title = "Previsión de Consumo"
 
-    header_fill = PatternFill("solid", start_color="1F4E79", end_color="1F4E79")
-    group_fill  = PatternFill("solid", start_color="D6E4F0", end_color="D6E4F0")
-    alt_fill    = PatternFill("solid", start_color="EBF5FB", end_color="EBF5FB")
-    white_fill  = PatternFill("solid", start_color="FFFFFF", end_color="FFFFFF")
-    title_fill  = PatternFill("solid", start_color="EBF5FB", end_color="EBF5FB")
-    thin        = Side(style='thin', color="BDC3C7")
-    border      = Border(left=thin, right=thin, top=thin, bottom=thin)
-
+    # Título
     ws.merge_cells('A1:F1')
-    ws['A1'] = 'Previsión de Consumo por Unidad Agregada – Total del Período'
-    ws['A1'].font      = Font(name="Arial", bold=True, color="1F4E79", size=14)
-    ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
-    ws['A1'].fill      = title_fill
+    c = ws['A1']
+    c.value     = 'Previsión de Consumo por Unidad Agregada – Total del Período'
+    c.font      = copy(font_title)
+    c.fill      = copy(fill_title)
+    c.alignment = copy(align_center)
     ws.row_dimensions[1].height = 30
 
+    # Subtítulo
     ws.merge_cells('A2:F2')
-    ws['A2'] = (f'Total registros: {len(result)}  |  '
-                f'Unidades Agregadas: {result["ID Unidad Agregada"].nunique()}  |  '
-                f'Generado: {datetime.now().strftime("%d/%m/%Y %H:%M")}')
-    ws['A2'].font      = Font(name="Arial", italic=True, color="666666", size=9)
-    ws['A2'].alignment = Alignment(horizontal='center', vertical='center')
-    ws['A2'].fill      = title_fill
+    c = ws['A2']
+    c.value     = (f'Total registros: {len(result)}  |  '
+                   f'Unidades Agregadas: {result["ID Unidad Agregada"].nunique()}  |  '
+                   f'Generado: {datetime.now().strftime("%d/%m/%Y %H:%M")}')
+    c.font      = copy(font_sub)
+    c.fill      = copy(fill_title)
+    c.alignment = copy(align_center)
     ws.row_dimensions[2].height = 16
 
+    # Encabezados
     headers = ['ID Unidad Agregada', 'Nombre Unidad Agregada',
                'Código Producto', 'Nombre Producto', 'Cantidad Bruta', 'Unidad Medida']
     for col_idx, h in enumerate(headers, 1):
-        cell = ws.cell(row=3, column=col_idx, value=h)
-        cell.font      = Font(name="Arial", bold=True, color="FFFFFF", size=11)
-        cell.fill      = header_fill
-        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-        cell.border    = border
+        c            = ws.cell(row=3, column=col_idx, value=h)
+        c.font       = copy(font_header)
+        c.fill       = copy(fill_header)
+        c.alignment  = copy(align_center)
+        c.border     = copy(border)
     ws.row_dimensions[3].height = 28
 
+    # Datos
     prev_unit   = None
     row_num     = 4
     fill_toggle = True
 
     for _, rec in result.iterrows():
         uid = rec['ID Unidad Agregada']
+
+        # Fila de grupo al cambiar unidad
         if uid != prev_unit:
             ws.merge_cells(f'A{row_num}:F{row_num}')
-            cell = ws.cell(row=row_num, column=1,
-                           value=f"  Unidad Agregada: {uid} – {rec['Nombre Unidad Agregada']}")
-            cell.font      = Font(name="Arial", bold=True, color="1F4E79", size=10)
-            cell.fill      = group_fill
-            cell.alignment = Alignment(horizontal='left', vertical='center')
-            cell.border    = border
+            c            = ws.cell(row=row_num, column=1,
+                                   value=f"  Unidad Agregada: {uid} – {rec['Nombre Unidad Agregada']}")
+            c.font       = copy(font_group)
+            c.fill       = copy(fill_group)
+            c.alignment  = copy(align_left)
+            c.border     = copy(border)
             ws.row_dimensions[row_num].height = 18
             row_num    += 1
             prev_unit   = uid
             fill_toggle = True
 
-        row_fill    = alt_fill if fill_toggle else white_fill
+        row_fill = fill_alt if fill_toggle else fill_white
         fill_toggle = not fill_toggle
 
-        values = [rec['ID Unidad Agregada'], rec['Nombre Unidad Agregada'],
-                  rec['Código Producto'],    rec['Nombre Producto'],
-                  rec['Cantidad Bruta'],     rec['Unidad Medida']]
+        valores = [rec['ID Unidad Agregada'], rec['Nombre Unidad Agregada'],
+                   rec['Código Producto'],    rec['Nombre Producto'],
+                   rec['Cantidad Bruta'],     rec['Unidad Medida']]
 
-        for col_idx, val in enumerate(values, 1):
-            cell        = ws.cell(row=row_num, column=col_idx, value=val)
-            cell.font   = Font(name="Arial", size=10)
-            cell.fill   = row_fill
-            cell.border = border
+        for col_idx, val in enumerate(valores, 1):
+            c        = ws.cell(row=row_num, column=col_idx, value=val)
+            c.font   = copy(font_data)
+            c.fill   = copy(row_fill)
+            c.border = copy(border)
             if col_idx == 5:
-                cell.number_format = '#,##0.000'
-                cell.alignment = Alignment(horizontal='right', vertical='center')
+                c.number_format = '#,##0.000'
+                c.alignment     = copy(align_right)
             elif col_idx in [1, 6]:
-                cell.alignment = Alignment(horizontal='center', vertical='center')
+                c.alignment = copy(align_center)
             else:
-                cell.alignment = Alignment(horizontal='left', vertical='center')
+                c.alignment = copy(align_left)
         row_num += 1
 
-    col_widths = [18, 35, 18, 38, 16, 14]
-    for i, w in enumerate(col_widths, 1):
+    # Anchos de columna
+    for i, w in enumerate([18, 35, 18, 38, 16, 14], 1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
     ws.freeze_panes = 'A4'
