@@ -401,7 +401,6 @@ HTML = """
 """
 
 def transformar_archivo(filepath):
-    ext = os.path.splitext(filepath)[1].lower()
     df = None
     errors = []
 
@@ -418,33 +417,54 @@ def transformar_archivo(filepath):
         except Exception as e:
             errors.append(f'xlrd: {e}')
 
-    # Intento 3: XML disfrazado de .xls (SpreadsheetML)
+    # Intento 3: SpreadsheetML (XML con namespace ss:)
     if df is None:
         try:
             import xml.etree.ElementTree as ET
             tree = ET.parse(filepath)
             root = tree.getroot()
-            ns = {'ss': 'urn:schemas-microsoft-com:office:spreadsheet'}
-            rows = []
-            worksheet = root.find('.//ss:Worksheet', ns) or root.find('.//{urn:schemas-microsoft-com:office:spreadsheet}Worksheet')
-            if worksheet is None:
-                # intentar sin namespace
-                worksheet = root.find('.//Worksheet') or root.find('.//Table')
-            table = worksheet.find('.//{urn:schemas-microsoft-com:office:spreadsheet}Table') if worksheet is not None else None
-            if table is None and worksheet is not None:
-                table = worksheet.find('.//Table')
-            if table is not None:
-                for row in table.findall('.//{urn:schemas-microsoft-com:office:spreadsheet}Row') or table.findall('.//Row'):
+
+            NS = 'urn:schemas-microsoft-com:office:spreadsheet'
+            ns = {'ss': NS}
+
+            rows_data = []
+            for worksheet in root.findall(f'{{{NS}}}Worksheet'):
+                table = worksheet.find(f'{{{NS}}}Table')
+                if table is None:
+                    continue
+                for row in table.findall(f'{{{NS}}}Row'):
                     cells = []
-                    for cell in (row.findall('.//{urn:schemas-microsoft-com:office:spreadsheet}Cell') or row.findall('.//Cell')):
-                        data = cell.find('.//{urn:schemas-microsoft-com:office:spreadsheet}Data') or cell.find('.//Data')
-                        cells.append(data.text if data is not None and data.text else None)
-                    rows.append(cells)
-                max_cols = max((len(r) for r in rows), default=0)
-                for r in rows:
+                    col_index = 0
+                    for cell in row.findall(f'{{{NS}}}Cell'):
+                        # Manejar ss:Index (celdas con saltos)
+                        idx_attr = cell.get(f'{{{NS}}}Index')
+                        if idx_attr is not None:
+                            target = int(idx_attr) - 1
+                            while col_index < target:
+                                cells.append(None)
+                                col_index += 1
+                        data = cell.find(f'{{{NS}}}Data')
+                        if data is not None and data.text:
+                            val = data.text.strip()
+                            dtype = data.get(f'{{{NS}}}Type', 'String')
+                            if dtype == 'Number':
+                                try:
+                                    val = float(val)
+                                except ValueError:
+                                    pass
+                            cells.append(val)
+                        else:
+                            cells.append(None)
+                        col_index += 1
+                    rows_data.append(cells)
+
+            if rows_data:
+                max_cols = max(len(r) for r in rows_data)
+                for r in rows_data:
                     while len(r) < max_cols:
                         r.append(None)
-                df = pd.DataFrame(rows)
+                df = pd.DataFrame(rows_data)
+
         except Exception as e:
             errors.append(f'xml: {e}')
 
