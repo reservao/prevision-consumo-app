@@ -3,4 +3,4 @@ services:
     name: prevision-consumo-app
     runtime: python
     buildCommand: "pip install --only-binary=:all: -r requirements.txt"
-    startCommand: "gunicorn app:app"
+    startCommand: "gunicorn app:app --timeout 120 --workers 1"
