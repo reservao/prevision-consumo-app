@@ -418,12 +418,35 @@ def transformar_archivo(filepath):
         except Exception as e:
             errors.append(f'xlrd: {e}')
 
-    # Intento 3: XML disfrazado de xls (exportado por sistemas como SAP/Oracle)
+    # Intento 3: XML disfrazado de .xls (SpreadsheetML)
     if df is None:
         try:
-            df = pd.read_excel(filepath, header=None, engine='calamine')
+            import xml.etree.ElementTree as ET
+            tree = ET.parse(filepath)
+            root = tree.getroot()
+            ns = {'ss': 'urn:schemas-microsoft-com:office:spreadsheet'}
+            rows = []
+            worksheet = root.find('.//ss:Worksheet', ns) or root.find('.//{urn:schemas-microsoft-com:office:spreadsheet}Worksheet')
+            if worksheet is None:
+                # intentar sin namespace
+                worksheet = root.find('.//Worksheet') or root.find('.//Table')
+            table = worksheet.find('.//{urn:schemas-microsoft-com:office:spreadsheet}Table') if worksheet is not None else None
+            if table is None and worksheet is not None:
+                table = worksheet.find('.//Table')
+            if table is not None:
+                for row in table.findall('.//{urn:schemas-microsoft-com:office:spreadsheet}Row') or table.findall('.//Row'):
+                    cells = []
+                    for cell in (row.findall('.//{urn:schemas-microsoft-com:office:spreadsheet}Cell') or row.findall('.//Cell')):
+                        data = cell.find('.//{urn:schemas-microsoft-com:office:spreadsheet}Data') or cell.find('.//Data')
+                        cells.append(data.text if data is not None and data.text else None)
+                    rows.append(cells)
+                max_cols = max((len(r) for r in rows), default=0)
+                for r in rows:
+                    while len(r) < max_cols:
+                        r.append(None)
+                df = pd.DataFrame(rows)
         except Exception as e:
-            errors.append(f'calamine: {e}')
+            errors.append(f'xml: {e}')
 
     if df is None:
         raise ValueError(f"No se pudo leer el archivo. Detalles: {' | '.join(errors)}")
