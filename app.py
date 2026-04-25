@@ -401,10 +401,11 @@ HTML = """
 """
 
 def transformar_archivo(filepath):
-    try:
+    ext = os.path.splitext(filepath)[1].lower()
+    if ext == '.xls':
+        df = pd.read_excel(filepath, header=None, engine='xlrd')
+    else:
         df = pd.read_excel(filepath, header=None, engine='openpyxl')
-    except Exception:
-        df = pd.read_excel(filepath, header=None)
 
     records = []
     unit_markers = df[df[0] == 'Unidad Agregada'].index.tolist()
