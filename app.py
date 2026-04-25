@@ -402,10 +402,31 @@ HTML = """
 
 def transformar_archivo(filepath):
     ext = os.path.splitext(filepath)[1].lower()
-    if ext == '.xls':
-        df = pd.read_excel(filepath, header=None, engine='xlrd')
-    else:
+    df = None
+    errors = []
+
+    # Intento 1: openpyxl (xlsx real)
+    try:
         df = pd.read_excel(filepath, header=None, engine='openpyxl')
+    except Exception as e:
+        errors.append(f'openpyxl: {e}')
+
+    # Intento 2: xlrd (xls binario clásico)
+    if df is None:
+        try:
+            df = pd.read_excel(filepath, header=None, engine='xlrd')
+        except Exception as e:
+            errors.append(f'xlrd: {e}')
+
+    # Intento 3: XML disfrazado de xls (exportado por sistemas como SAP/Oracle)
+    if df is None:
+        try:
+            df = pd.read_excel(filepath, header=None, engine='calamine')
+        except Exception as e:
+            errors.append(f'calamine: {e}')
+
+    if df is None:
+        raise ValueError(f"No se pudo leer el archivo. Detalles: {' | '.join(errors)}")
 
     records = []
     unit_markers = df[df[0] == 'Unidad Agregada'].index.tolist()
