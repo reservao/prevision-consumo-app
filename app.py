@@ -403,30 +403,28 @@ HTML = """
 def transformar_archivo(filepath):
     df = None
     errors = []
+    use_xml = False
 
-    # Intento 1: openpyxl (xlsx real)
+    # Intento 1: openpyxl
     try:
         df = pd.read_excel(filepath, header=None, engine='openpyxl')
     except Exception as e:
         errors.append(f'openpyxl: {e}')
 
-    # Intento 2: xlrd (xls binario clásico)
+    # Intento 2: xlrd
     if df is None:
         try:
             df = pd.read_excel(filepath, header=None, engine='xlrd')
         except Exception as e:
             errors.append(f'xlrd: {e}')
 
-    # Intento 3: SpreadsheetML (XML con namespace ss:)
+    # Intento 3: SpreadsheetML XML
     if df is None:
         try:
             import xml.etree.ElementTree as ET
             tree = ET.parse(filepath)
             root = tree.getroot()
-
             NS = 'urn:schemas-microsoft-com:office:spreadsheet'
-            ns = {'ss': NS}
-
             rows_data = []
             for worksheet in root.findall(f'{{{NS}}}Worksheet'):
                 table = worksheet.find(f'{{{NS}}}Table')
@@ -436,7 +434,6 @@ def transformar_archivo(filepath):
                     cells = []
                     col_index = 0
                     for cell in row.findall(f'{{{NS}}}Cell'):
-                        # Manejar ss:Index (celdas con saltos)
                         idx_attr = cell.get(f'{{{NS}}}Index')
                         if idx_attr is not None:
                             target = int(idx_attr) - 1
@@ -457,19 +454,54 @@ def transformar_archivo(filepath):
                             cells.append(None)
                         col_index += 1
                     rows_data.append(cells)
-
             if rows_data:
                 max_cols = max(len(r) for r in rows_data)
                 for r in rows_data:
                     while len(r) < max_cols:
                         r.append(None)
                 df = pd.DataFrame(rows_data)
-
+                use_xml = True
         except Exception as e:
             errors.append(f'xml: {e}')
 
     if df is None:
         raise ValueError(f"No se pudo leer el archivo. Detalles: {' | '.join(errors)}")
+
+    # --- Parsear registros ---
+    # En XML: código/cantidad/unidad están en cols 0,1,2
+    # En Excel convertido: están en cols 0,3,8
+    col_cantidad = 1 if use_xml else 3
+    col_unidad   = 2 if use_xml else 8
+
+    records = []
+    unit_markers = df[df[0] == 'Unidad Agregada'].index.tolist()
+
+    for idx, marker in enumerate(unit_markers):
+        unit_id   = str(df.iloc[marker + 1, 0]).strip()
+        unit_name = str(df.iloc[marker + 2, 0]).strip()
+        end = unit_markers[idx + 1] if idx + 1 < len(unit_markers) else len(df)
+        i = marker + 3
+        while i < end:
+            codigo  = str(df.iloc[i, 0]).strip()
+            cantidad = df.iloc[i, col_cantidad]
+            unidad  = str(df.iloc[i, col_unidad]).strip() if df.shape[1] > col_unidad else ''
+            nombre  = str(df.iloc[i + 1, 0]).strip() if i + 1 < end else ''
+            if '.' in codigo and pd.notna(cantidad):
+                try:
+                    records.append({
+                        'ID Unidad Agregada':     unit_id,
+                        'Nombre Unidad Agregada': unit_name,
+                        'Código Producto':        codigo,
+                        'Nombre Producto':        nombre,
+                        'Cantidad Bruta':         float(cantidad),
+                        'Unidad Medida':          unidad
+                    })
+                except (ValueError, TypeError):
+                    pass
+            i += 2
+
+    if not records:
+        raise ValueError("No se encontraron datos válidos en el archivo. Verifica que el formato sea correcto.")
 
     records = []
     unit_markers = df[df[0] == 'Unidad Agregada'].index.tolist()
