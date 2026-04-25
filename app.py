@@ -1,57 +1,54 @@
 from flask import Flask, request, send_file, render_template_string
 import pandas as pd
-import io
-import os
-import tempfile
-import xml.etree.ElementTree as ET
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
+import io, os, tempfile, xml.etree.ElementTree as ET
 from datetime import datetime
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
-HTML = """
-<!DOCTYPE html>
+HTML = """<!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Previsión de Consumo</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root { --navy:#1a2e4a;--blue:#1F4E79;--accent:#2e86de;--light:#EBF5FB;--mid:#D6E4F0;--muted:#6b7c93;--white:#fff;--success:#27ae60;--error:#e74c3c; }
-  body { font-family:'DM Sans',sans-serif;background:#f0f4f8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:2rem; }
-  body::before { content:'';position:fixed;inset:0;background:radial-gradient(ellipse at 20% 20%,rgba(31,78,121,.08) 0%,transparent 60%),radial-gradient(ellipse at 80% 80%,rgba(46,134,222,.06) 0%,transparent 60%);pointer-events:none;z-index:0; }
-  .card { background:var(--white);border-radius:24px;box-shadow:0 20px 60px rgba(26,46,74,.12),0 4px 16px rgba(26,46,74,.06);padding:3rem 3.5rem;max-width:560px;width:100%;position:relative;z-index:1; }
-  .logo-row { display:flex;align-items:center;gap:.75rem;margin-bottom:2rem; }
-  .logo-icon { width:44px;height:44px;background:linear-gradient(135deg,var(--blue),var(--accent));border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.4rem;flex-shrink:0; }
-  .logo-text { font-family:'DM Serif Display',serif;font-size:1.1rem;color:var(--navy);line-height:1.2; }
-  .logo-text span { display:block;font-family:'DM Sans',sans-serif;font-size:.75rem;font-weight:400;color:var(--muted);letter-spacing:.04em;text-transform:uppercase; }
-  h1 { font-family:'DM Serif Display',serif;font-size:2rem;color:var(--navy);line-height:1.2;margin-bottom:.75rem; }
-  .subtitle { color:var(--muted);font-size:.95rem;line-height:1.6;margin-bottom:2.5rem; }
-  .steps { display:flex;gap:1rem;margin-bottom:2.5rem; }
-  .step { flex:1;background:var(--light);border-radius:12px;padding:1rem;text-align:center; }
-  .step-num { font-size:1.4rem;margin-bottom:.3rem; }
-  .step-label { font-size:.75rem;color:var(--blue);font-weight:600;letter-spacing:.02em; }
-  .drop-zone { border:2px dashed var(--mid);border-radius:16px;padding:2.5rem 2rem;text-align:center;cursor:pointer;transition:all .25s ease;background:var(--light);margin-bottom:1.5rem;position:relative; }
-  .drop-zone:hover,.drop-zone.dragover { border-color:var(--accent);background:rgba(46,134,222,.05); }
-  .drop-zone input[type="file"] { position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%; }
-  .drop-icon { font-size:2.5rem;margin-bottom:.75rem; }
-  .drop-title { font-weight:600;color:var(--navy);font-size:.95rem;margin-bottom:.3rem; }
-  .drop-sub { font-size:.8rem;color:var(--muted); }
-  .file-selected { background:rgba(39,174,96,.08);border-color:var(--success);border-style:solid; }
-  .file-name { font-size:.85rem;color:var(--success);font-weight:600;margin-top:.5rem;word-break:break-all; }
-  .btn { width:100%;padding:1rem;background:linear-gradient(135deg,var(--blue),var(--accent));color:white;border:none;border-radius:12px;font-family:'DM Sans',sans-serif;font-size:1rem;font-weight:600;cursor:pointer;transition:all .2s ease;box-shadow:0 4px 16px rgba(31,78,121,.25);letter-spacing:.02em; }
-  .btn:hover:not(:disabled) { transform:translateY(-2px);box-shadow:0 8px 24px rgba(31,78,121,.3); }
-  .btn:disabled { opacity:.6;cursor:not-allowed;transform:none; }
-  .alert { padding:1rem 1.25rem;border-radius:10px;font-size:.88rem;margin-top:1rem;display:none; }
-  .alert.error { background:rgba(231,76,60,.1);color:var(--error);border:1px solid rgba(231,76,60,.2);display:block; }
-  .alert.success { background:rgba(39,174,96,.1);color:var(--success);border:1px solid rgba(39,174,96,.2);display:block; }
-  .loading { display:none;align-items:center;justify-content:center;gap:.75rem;padding:1rem;color:var(--blue);font-size:.9rem;font-weight:500; }
-  .loading.show { display:flex; }
-  .spinner { width:20px;height:20px;border:3px solid var(--mid);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite; }
-  @keyframes spin { to { transform:rotate(360deg); } }
-  .footer { text-align:center;margin-top:2rem;font-size:.75rem;color:var(--muted); }
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{--navy:#1a2e4a;--blue:#1F4E79;--accent:#2e86de;--light:#EBF5FB;--mid:#D6E4F0;--muted:#6b7c93;--white:#fff;--success:#27ae60;--error:#e74c3c}
+  body{font-family:'DM Sans',sans-serif;background:#f0f4f8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:2rem}
+  .card{background:var(--white);border-radius:24px;box-shadow:0 20px 60px rgba(26,46,74,.12);padding:3rem 3.5rem;max-width:560px;width:100%}
+  .logo-row{display:flex;align-items:center;gap:.75rem;margin-bottom:2rem}
+  .logo-icon{width:44px;height:44px;background:linear-gradient(135deg,var(--blue),var(--accent));border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.4rem}
+  .logo-text{font-family:'DM Serif Display',serif;font-size:1.1rem;color:var(--navy);line-height:1.2}
+  .logo-text span{display:block;font-family:'DM Sans',sans-serif;font-size:.75rem;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+  h1{font-family:'DM Serif Display',serif;font-size:2rem;color:var(--navy);line-height:1.2;margin-bottom:.75rem}
+  .subtitle{color:var(--muted);font-size:.95rem;line-height:1.6;margin-bottom:2.5rem}
+  .steps{display:flex;gap:1rem;margin-bottom:2.5rem}
+  .step{flex:1;background:var(--light);border-radius:12px;padding:1rem;text-align:center}
+  .step-num{font-size:1.4rem;margin-bottom:.3rem}
+  .step-label{font-size:.75rem;color:var(--blue);font-weight:600}
+  .drop-zone{border:2px dashed var(--mid);border-radius:16px;padding:2.5rem 2rem;text-align:center;cursor:pointer;transition:all .25s;background:var(--light);margin-bottom:1.5rem;position:relative}
+  .drop-zone:hover,.drop-zone.dragover{border-color:var(--accent);background:rgba(46,134,222,.05)}
+  .drop-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+  .drop-icon{font-size:2.5rem;margin-bottom:.75rem}
+  .drop-title{font-weight:600;color:var(--navy);font-size:.95rem;margin-bottom:.3rem}
+  .drop-sub{font-size:.8rem;color:var(--muted)}
+  .file-selected{background:rgba(39,174,96,.08);border-color:var(--success);border-style:solid}
+  .file-name{font-size:.85rem;color:var(--success);font-weight:600;margin-top:.5rem;word-break:break-all}
+  .btn{width:100%;padding:1rem;background:linear-gradient(135deg,var(--blue),var(--accent));color:#fff;border:none;border-radius:12px;font-family:'DM Sans',sans-serif;font-size:1rem;font-weight:600;cursor:pointer;transition:all .2s;box-shadow:0 4px 16px rgba(31,78,121,.25)}
+  .btn:hover:not(:disabled){transform:translateY(-2px)}
+  .btn:disabled{opacity:.6;cursor:not-allowed}
+  .alert{padding:1rem 1.25rem;border-radius:10px;font-size:.88rem;margin-top:1rem;display:none}
+  .alert.error{background:rgba(231,76,60,.1);color:var(--error);border:1px solid rgba(231,76,60,.2);display:block}
+  .alert.success{background:rgba(39,174,96,.1);color:var(--success);border:1px solid rgba(39,174,96,.2);display:block}
+  .loading{display:none;align-items:center;justify-content:center;gap:.75rem;padding:1rem;color:var(--blue);font-size:.9rem;font-weight:500}
+  .loading.show{display:flex}
+  .spinner{width:20px;height:20px;border:3px solid var(--mid);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .footer{text-align:center;margin-top:2rem;font-size:.75rem;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -82,41 +79,26 @@ HTML = """
   <div class="footer">Los archivos se procesan en memoria y no se almacenan en ningún servidor.</div>
 </div>
 <script>
-  const fileInput=document.getElementById('fileInput'),fileName=document.getElementById('fileName'),
-        submitBtn=document.getElementById('submitBtn'),dropZone=document.getElementById('dropZone'),
-        alertBox=document.getElementById('alertBox'),loading=document.getElementById('loading'),
-        form=document.getElementById('uploadForm');
-  fileInput.addEventListener('change',()=>{
-    if(fileInput.files.length>0){fileName.textContent='✅ '+fileInput.files[0].name;dropZone.classList.add('file-selected');submitBtn.disabled=false;}
-  });
-  dropZone.addEventListener('dragover',e=>{e.preventDefault();dropZone.classList.add('dragover');});
-  dropZone.addEventListener('dragleave',()=>dropZone.classList.remove('dragover'));
-  dropZone.addEventListener('drop',e=>{
-    e.preventDefault();dropZone.classList.remove('dragover');
-    const files=e.dataTransfer.files;
-    if(files.length>0){fileInput.files=files;fileName.textContent='✅ '+files[0].name;dropZone.classList.add('file-selected');submitBtn.disabled=false;}
-  });
-  form.addEventListener('submit',async(e)=>{
-    e.preventDefault();alertBox.className='alert';alertBox.textContent='';
-    loading.classList.add('show');submitBtn.disabled=true;
-    const formData=new FormData();formData.append('file',fileInput.files[0]);
-    try {
-      const response=await fetch('/transformar',{method:'POST',body:formData});
-      if(response.ok){
-        const blob=await response.blob();const url=URL.createObjectURL(blob);
-        const a=document.createElement('a');a.href=url;a.download='Prevision_Consumo_Tabla.xlsx';a.click();URL.revokeObjectURL(url);
-        alertBox.className='alert success';alertBox.textContent='✅ ¡Archivo transformado y descargado exitosamente!';
-      } else {
-        const err=await response.json();alertBox.className='alert error';
-        alertBox.textContent='❌ Error: '+(err.error||'Ocurrió un problema al procesar el archivo.');
-      }
-    } catch(err){alertBox.className='alert error';alertBox.textContent='❌ Error de conexión. Intenta de nuevo.';}
-    finally{loading.classList.remove('show');submitBtn.disabled=false;}
+  const fi=document.getElementById('fileInput'),fn=document.getElementById('fileName'),
+        sb=document.getElementById('submitBtn'),dz=document.getElementById('dropZone'),
+        ab=document.getElementById('alertBox'),ld=document.getElementById('loading'),
+        fm=document.getElementById('uploadForm');
+  fi.addEventListener('change',()=>{if(fi.files.length>0){fn.textContent='✅ '+fi.files[0].name;dz.classList.add('file-selected');sb.disabled=false;}});
+  dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dragover');});
+  dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
+  dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('dragover');const f=e.dataTransfer.files;if(f.length>0){fi.files=f;fn.textContent='✅ '+f[0].name;dz.classList.add('file-selected');sb.disabled=false;}});
+  fm.addEventListener('submit',async(e)=>{
+    e.preventDefault();ab.className='alert';ab.textContent='';ld.classList.add('show');sb.disabled=true;
+    const fd=new FormData();fd.append('file',fi.files[0]);
+    try{
+      const r=await fetch('/transformar',{method:'POST',body:fd});
+      if(r.ok){const b=await r.blob(),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='Prevision_Consumo_Tabla.xlsx';a.click();URL.revokeObjectURL(u);ab.className='alert success';ab.textContent='✅ ¡Archivo transformado y descargado exitosamente!';}
+      else{const err=await r.json();ab.className='alert error';ab.textContent='❌ Error: '+(err.error||'Ocurrió un problema.');}
+    }catch(err){ab.className='alert error';ab.textContent='❌ Error de conexión. Intenta de nuevo.';}
+    finally{ld.classList.remove('show');sb.disabled=false;}
   });
 </script>
-</body>
-</html>
-"""
+</body></html>"""
 
 
 def leer_xml_spreadsheetml(filepath):
@@ -158,7 +140,7 @@ def leer_xml_spreadsheetml(filepath):
     for r in rows_data:
         while len(r) < max_cols:
             r.append(None)
-    return pd.DataFrame(rows_data)
+    return pd.DataFrame(rows_data), True
 
 
 def transformar_archivo(filepath):
@@ -176,8 +158,7 @@ def transformar_archivo(filepath):
             pass
     if df is None:
         try:
-            df = leer_xml_spreadsheetml(filepath)
-            use_xml = True
+            df, use_xml = leer_xml_spreadsheetml(filepath)
         except Exception:
             pass
     if df is None:
@@ -217,73 +198,31 @@ def transformar_archivo(filepath):
 
     result = pd.DataFrame(records)
 
+    # Generar Excel con pandas (rápido) + formato mínimo solo en encabezados
     output = io.BytesIO()
-    writer = pd.ExcelWriter(output, engine='xlsxwriter')
-    result.to_excel(writer, sheet_name='Prevision de Consumo', index=False, startrow=3)
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        result.to_excel(writer, index=False, sheet_name='Previsión de Consumo')
+        ws = writer.sheets['Previsión de Consumo']
 
-    wb = writer.book
-    ws = writer.sheets['Prevision de Consumo']
+        # Formato encabezados (solo 6 celdas — muy rápido)
+        for col_idx in range(1, 7):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.font      = Font(name="Arial", bold=True, color="FFFFFF", size=11)
+            cell.fill      = PatternFill("solid", start_color="1F4E79", end_color="1F4E79")
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
-    fmt_title  = wb.add_format({'bold':True,'font_name':'Arial','font_size':14,'font_color':'#1F4E79','bg_color':'#EBF5FB','align':'center','valign':'vcenter'})
-    fmt_sub    = wb.add_format({'italic':True,'font_name':'Arial','font_size':9,'font_color':'#666666','bg_color':'#EBF5FB','align':'center','valign':'vcenter'})
-    fmt_header = wb.add_format({'bold':True,'font_name':'Arial','font_size':11,'font_color':'#FFFFFF','bg_color':'#1F4E79','align':'center','valign':'vcenter','border':1,'border_color':'#BDC3C7','text_wrap':True})
-    fmt_group  = wb.add_format({'bold':True,'font_name':'Arial','font_size':10,'font_color':'#1F4E79','bg_color':'#D6E4F0','align':'left','valign':'vcenter','border':1,'border_color':'#BDC3C7'})
-    fmt_alt_l  = wb.add_format({'font_name':'Arial','font_size':10,'bg_color':'#EBF5FB','align':'left','valign':'vcenter','border':1,'border_color':'#BDC3C7'})
-    fmt_alt_c  = wb.add_format({'font_name':'Arial','font_size':10,'bg_color':'#EBF5FB','align':'center','valign':'vcenter','border':1,'border_color':'#BDC3C7'})
-    fmt_alt_r  = wb.add_format({'font_name':'Arial','font_size':10,'bg_color':'#EBF5FB','align':'right','valign':'vcenter','border':1,'border_color':'#BDC3C7','num_format':'#,##0.000'})
-    fmt_wht_l  = wb.add_format({'font_name':'Arial','font_size':10,'bg_color':'#FFFFFF','align':'left','valign':'vcenter','border':1,'border_color':'#BDC3C7'})
-    fmt_wht_c  = wb.add_format({'font_name':'Arial','font_size':10,'bg_color':'#FFFFFF','align':'center','valign':'vcenter','border':1,'border_color':'#BDC3C7'})
-    fmt_wht_r  = wb.add_format({'font_name':'Arial','font_size':10,'bg_color':'#FFFFFF','align':'right','valign':'vcenter','border':1,'border_color':'#BDC3C7','num_format':'#,##0.000'})
+        # Anchos de columna
+        for i, w in enumerate([18, 35, 18, 38, 16, 14], 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
 
-    ws.merge_range('A1:F1','Previsión de Consumo por Unidad Agregada – Total del Período',fmt_title)
-    ws.set_row(0,30)
-    ws.merge_range('A2:F2',
-        f'Total registros: {len(result)}  |  Unidades Agregadas: {result["ID Unidad Agregada"].nunique()}  |  Generado: {datetime.now().strftime("%d/%m/%Y %H:%M")}',
-        fmt_sub)
-    ws.set_row(1,16)
+        # Formato numérico cantidad
+        for row in ws.iter_rows(min_row=2, min_col=5, max_col=5):
+            for cell in row:
+                cell.number_format = '#,##0.000'
 
-    headers = ['ID Unidad Agregada','Nombre Unidad Agregada','Código Producto','Nombre Producto','Cantidad Bruta','Unidad Medida']
-    for col_idx,h in enumerate(headers):
-        ws.write(3,col_idx,h,fmt_header)
-    ws.set_row(3,28)
+        ws.freeze_panes = 'A2'
+        ws.auto_filter.ref = f'A1:F{len(result) + 1}'
 
-    prev_unit   = None
-    row_num     = 4
-    fill_toggle = True
-
-    for _,rec in result.iterrows():
-        uid = rec['ID Unidad Agregada']
-        if uid != prev_unit:
-            ws.merge_range(row_num,0,row_num,5,
-                f"  Unidad Agregada: {uid} - {rec['Nombre Unidad Agregada']}",fmt_group)
-            ws.set_row(row_num,18)
-            row_num   += 1
-            prev_unit  = uid
-            fill_toggle= True
-
-        fl = fmt_alt_l if fill_toggle else fmt_wht_l
-        fc = fmt_alt_c if fill_toggle else fmt_wht_c
-        fr = fmt_alt_r if fill_toggle else fmt_wht_r
-        fill_toggle = not fill_toggle
-
-        ws.write(row_num,0,rec['ID Unidad Agregada'],fc)
-        ws.write(row_num,1,rec['Nombre Unidad Agregada'],fl)
-        ws.write(row_num,2,rec['Código Producto'],fc)
-        ws.write(row_num,3,rec['Nombre Producto'],fl)
-        ws.write(row_num,4,rec['Cantidad Bruta'],fr)
-        ws.write(row_num,5,rec['Unidad Medida'],fc)
-        row_num += 1
-
-    ws.set_column(0,0,18)
-    ws.set_column(1,1,35)
-    ws.set_column(2,2,18)
-    ws.set_column(3,3,38)
-    ws.set_column(4,4,16)
-    ws.set_column(5,5,14)
-    ws.freeze_panes(4,0)
-    ws.autofilter(3,0,row_num-1,5)
-
-    writer.close()
     output.seek(0)
     return output
 
@@ -309,9 +248,9 @@ def transformar():
     try:
         output = transformar_archivo(tmp_path)
         return send_file(output,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            as_attachment=True,
-            download_name='Prevision_Consumo_Tabla.xlsx')
+                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                         as_attachment=True,
+                         download_name='Prevision_Consumo_Tabla.xlsx')
     except Exception as e:
         return {'error': str(e)}, 500
     finally:
