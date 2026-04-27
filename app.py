@@ -164,26 +164,8 @@ def transformar_archivo(filepath):
     if df is None:
         raise ValueError("No se pudo leer el archivo. Asegúrate de subir un .xls o .xlsx válido.")
 
-    if use_xml:
-    col_cant = 1
-    col_uni  = 2
-else:
-    # Detectar columna de cantidad automáticamente
-    sample_markers = df[df[0].isin(['Unidad Agregada', 'Unidade Agregada'])].index.tolist()
-    col_cant = 3
-    col_uni  = 8
-    if sample_markers:
-        test_row = sample_markers[0] + 3
-        if test_row < len(df):
-            for c in [1, 3, 4]:
-                if c < df.shape[1] and pd.notna(df.iloc[test_row, c]):
-                    try:
-                        float(df.iloc[test_row, c])
-                        col_cant = c
-                        col_uni  = c + 1
-                        break
-                    except (ValueError, TypeError):
-                        pass
+   col_cant = 1 if use_xml else 3
+    col_uni  = 2 if use_xml else 8
 
     records = []
     unit_markers = df[df[0].isin(['Unidad Agregada', 'Unidade Agregada'])].index.tolist()
