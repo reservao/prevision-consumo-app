@@ -164,7 +164,7 @@ def transformar_archivo(filepath):
     if df is None:
         raise ValueError("No se pudo leer el archivo. Asegúrate de subir un .xls o .xlsx válido.")
 
-   col_cant = 1 if use_xml else 3
+    col_cant = 1 if use_xml else 3
     col_uni  = 2 if use_xml else 8
 
     records = []
